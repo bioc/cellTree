@@ -1,0 +1,440 @@
+%\VignetteEngine{knitr::knitr}
+%\VignetteIndexEntry{Inference and visualisation of Single-Cell RNA-seq Data data as a hierarchical tree structure}
+%\VignettePackage{cellTree}
+
+% To compile this document
+% library('knitr'); rm(list=ls()); knit('cellTree/vignettes/cellTree-vignette.Rnw')
+% library('knitr'); rm(list=ls()); knit2pdf('cellTree/vignettes/cellTree-vignette.Rnw'); openPDF('cellTree-vignette.pdf')
+% 
+
+\documentclass[12pt]{article}
+
+\newcommand{\cellTree}{\textit{cellTree}}
+\usepackage{ dsfont }
+
+<<knitr, echo=FALSE, results="hide">>=
+library("knitr")
+opts_chunk$set(tidy=FALSE,tidy.opts=list(width.cutoff=30),dev="png",fig.show="hide",
+               fig.width=4,fig.height=4.5,
+               message=FALSE)
+@ 
+
+<<style, eval=TRUE, echo=FALSE, results="asis">>=
+BiocStyle::latex()
+@
+
+\author{David duVerle \& Koji Tsuda \\[1em] \small{Graduate School of Frontier Sciences, the University of Tokyo} \mbox{ }\\ \small{\texttt{$^*$Correspondence to dave (at) cb.k.u-tokyo.ac.jp}}}
+
+\bioctitle[Single-Cell RNA-seq Data with \cellTree{}]{Inferring and visualising the hierarchical tree structure of Single-Cell RNA-seq Data data with the \cellTree{} package}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+  \vspace{1em}
+  Single-cell RNA sequencing, one of the most significant advances in recent genomics~\cite{saliba2014single}, is becoming increasingly common, providing unique insights into the exact gene-expression snapshots of cells throughout biological processes such as cell differentiation or tumorigenesis.
+  
+  A number of methods have been suggested to help organise and visualise the structure of cells measured through single-cell sequencing \cite{trapnell2014dynamics,julia2015sincell}, yet none seem to be able to accurately capture complex differentiation paths over time, or offer a satisfying explanation for the low-dimensional support used to infer the cell distances.
+  
+  This \R{} package implements a new statistical method based on topic modelling techniques, for inferring and visualising the tree structure of single-cell RNA-seq samples and interpreting the sets of genes driving transitions between states.
+  
+  \vspace{1em}
+\textbf{\cellTree{} version:} \Sexpr{packageDescription("cellTree")$Version} \footnote{This document used the vignette from \Bioconductor{} package \Biocpkg{DESeq2} as \CRANpkg{knitr} template}
+\end{abstract}
+<<options, results="hide", echo=FALSE>>=
+options(digits=3, width=80, prompt=" ", continue=" ")
+@
+
+
+\newpage
+
+\tableofcontents
+
+\section{Introduction}
+
+When considering a number of single-cell expression measurements taken over time (e.g during cell differentiation) or space (e.g. with samples taken across similar tissues), we expect specific pathways, and the genes that compose them, to be more or less active based on the exact state of the cell sampled. This leads us to hypothesise the existence of (possibly overlapping) sets of genes, representing groups of pathways and indirectly characterising specific biological processes under way at sampling time.
+
+In trying to identify the structure connecting these cell measurements, we therefore make the assumption that there exist a latent gene group structure that explains the similarities between cell measurements. Such a (low-dimensional) group structure would additionally provides a support for dimension-reduction of the overall data set that we expect to be both vastly more accurate and more semantically-useful than other statistical procedures such as PCA, ICA or MDS.
+
+We borrowed a method from the field of natural language processing known as Latent Dirichlet Allocation (itself part of the more general field of research of `topic modelling') to identify this group structure and use it to build a tree structure connecting all cells. In addition to wrapping existing inference methods in a `bioinformatics-friendly' package, we added a number of functions to take advantage and visualise the fitted model.
+
+Principally, we introduced ``backbone trees'', a new type of tree structure specifically designed to easily visualise cells along complex differentiation paths, and proposed a heuristic implementation to estimate such a tree from the distance matrix obtained through the fitted model.
+
+Additionally, we implemented a pipeline to run gene set enrichment analysis on the different LDA ``topics'', using Gene Ontology terms. Results can be visualised in the form of annotated tables or subgraph of the Gene Ontology DAG.
+
+All tabular results can be exported to \LaTeX, for convenient re-use in scientific communication.
+
+\section{Installing the \cellTree{} package}
+
+\cellTree{} requires the following CRAN-R packages: \CRANpkg{topicmodels}, \CRANpkg{slam},  \CRANpkg{maptpx}, \CRANpkg{igraph}, \CRANpkg{xtable}, \CRANpkg{Rgraphviz} and \CRANpkg{gplots}, along with the \Bioconductor{} package: \Biocpkg{topGO}.
+
+Installing \cellTree{} from \Bioconductor{} will install all these dependencies:
+
+<<install_cellTree, eval=FALSE>>=
+source("http://bioconductor.org/biocLite.R") 
+biocLite("cellTree")
+@ %def
+
+The documentation's examples as well as this vignette's code will further require \Bioconductor{} packages: \Biocpkg{HSMMSingleCell}, \Biocpkg{org.Hs.eg.db} and \Biocpkg{biomaRt}:
+
+<<install_missing_bioconductor_packages, eval=FALSE>>=
+biocLite(c("HSMMSingleCell", "org.Hs.eg.db", "biomaRt"))
+@ %def
+
+Then load the package with:
+
+<<init_sincell, cache=FALSE, eval=TRUE,warning=FALSE>>=
+library(cellTree)
+@ %def
+
+\section{Preparing the Gene Expression Data Input}
+
+The principal input to \cellTree{} is a matrix of gene expression values, with genes as rows and cells as columns. Both gene names (preferably in HGNC format) and cell identifiers should be present as \Rcode{rownames} and \Rcode{colnames} for the matrix.
+
+In this vignette, we will be using RNA-seq data for human skeletal muscle myoblasts (HSMM) compiled in the \Biocpkg{HSMMSingleCell} package:
+
+<<load_hsmm_data, eval=TRUE>>=
+# load HSMMSingleCell package and load the data set:
+library(HSMMSingleCell)
+data(HSMM_expr_matrix)
+
+# Total number of genes * cells:
+dim(HSMM_expr_matrix)
+@ %def
+
+Unlike other cell ordering methods, \cellTree{}'s functions scale relatively well to very-high-dimensional data, and it is therefore not particularly essential to reduce the set of genes selected. However, the default pipeline will automatically apply a log transformation and remove low-variance values from the data set. This can be disabled if the data is already treated or if you would prefer to do your own treatment (see the documentation for \Rfunction{compute.lda}).
+
+\section{Fitting LDA Model}
+
+\subsection{Using Latent Dirichlet Allocation for Gene Expression Data}
+
+The Latent Dirichlet Allocation (LDA; \cite{blei2003latent}) model is a Bayesian mixture model initially developed for the analysis of text documents, that allows sets of observations to be explained by unobserved groups that explain why some parts of the data are similar. In natural language processing, given a set of documents and word-occurence counts for each documents, the model assumes that each document is a mixture of topics (with a Dirichlet prior) and each word is the result of one of the document's topic (with a Dirichlet prior on the per-topic word distribution).
+
+
+For an in-depth explanation of the mathematics behind the general LDA model, we recommend consulting David Blei's original paper~\cite{blei2003latent}. For details on the different inference methods and their implementation, please consult the documentation and vignettes for the \CRANpkg{topicmodels} and \CRANpkg{maptpx} packages, along with their companion publications \cite{hornik2011topicmodels, taddy2011estimation}.
+
+
+In the context of single-cell gene expression analysis, cells play the role of `documents' and discretised gene expression levels stand for `word-occurence counts'. The fitted LDA model for our data is therefore composed of a set of topic distributions for each cell, and per-topic gene distributions. The per-cell topic histograms can then be used as a low-dimension support to compute cell distances and build a structured representation of the cell hierarchy.
+
+\subsection{Choosing the Number of Topics}
+
+The main parameter to the LDA fitting procedure is the desired number of topics: \Robject{k}, (best values for other hyper-parameters are automatically picked by the different fitting methods). As often with such models, a large number of topics (and therefore a more complex statistical model) can lead to overfitting, and it is therefore preferable to use the smallest possible number that provides a good explanation of the data.
+
+
+Because of the loose significance of the concept of `topics' in the context of gene expression in a cell, it is difficult to give a reliable estimate of the ideal number, based on biological knowledge alone. A good rule of thumb is that the number of topics should somewhat match the number of major processes (e.g. differentiation steps) undertaken by the cells during the experiment. During our own experiments with a number of single-cell time-series and tissue-based data sets, we found that the optimal number of topics generally stayed between 3 and 7.
+
+
+The generally-recommended method to select a number of topics is to use cross-validation with different values of \Robject{k}, looking at the likelihood for each topic number. However, the computation time for such a method can be prohibitive on large data sets and large range of topic numbers. For convenience, we provide a wrapper to the \CRANpkg{maptpx} implementation that uses Matthew Taddy's ingenious method for model selection through joint MAP estimation \cite{taddy2011estimation}: as it fits models for iteratively larger number of topics (using the previous fit's residuals as a basis), this method can exhaustively look at a large range of topic numbers in considerably less time than it takes other methods.
+
+
+One way to check the sparsity of the model based on biological knowledge, is to examine the gene set enrichment for the different topics (see \ref{sec:go.enrichment}): if two topics share a large amount of identical GO terms, it is quite possible that they are redundant and the model could be made sparser.
+
+\subsection{Computing LDA Model Fit}
+
+Using the HSMM data set previously loaded, we can use \CRANpkg{maptpx} to automatically select the best number of topics and return the fitted model for that number:
+
+<<compute_lda_maptpx, eval=FALSE>>=
+# Run LDA inference using 'maptpx' method 
+# finding best number of topics k between 3 and 8:
+lda.results = compute.lda(HSMM_expr_matrix, k.topics=3:8, method="maptpx")
+@ %def
+
+The argument \Rcode{k.topics} can only be sent a vector of integers when \Rcode{method} argument is set to ``maptpx'' (other methods must be sent a scalar value).
+
+
+Optionally, we could run the (much slower, though potentially more accurate) collapsed Gibbs sampling method:
+
+<<compute_lda_gibbs, eval=FALSE>>=
+# Run LDA inference using 'Gibbs' method for k = 6 topics:
+lda.results = compute.lda(HSMM_expr_matrix, k.topics=6, method="Gibbs")
+@ %def
+
+In order to perform further analysis on the fitted LDA model, it is be preferable for the row names of the input data matrix to contain HGNC-conformant gene names. This can be done by using the \Biocpkg{biomaRt} package to convert the original ENSEMBL gene names of the \Biocpkg{HSMMSingleCell} package to HGCN (a pre-computed set can also be used: see following paragraph):
+
+<<compute_lda_with_hgnc, eval=FALSE>>=
+HSMM_expr_matrix.hgnc = HSMM_expr_matrix
+
+library("biomaRt")
+ensembl.ids = sapply(strsplit(rownames(HSMM_expr_matrix), split=".",fixed=TRUE),
+					 "[",
+					 1)
+ensembl.mart = useMart(host="www.ensembl.org",
+					   "ENSEMBL_MART_ENSEMBL",
+					   dataset = "hsapiens_gene_ensembl")
+gene.map = getBM(attributes = c("ensembl_gene_id", "entrezgene", "hgnc_symbol"),
+				 filters = "ensembl_gene_id",
+				 values = ensembl.ids,
+				 mart = ensembl.mart)
+idx = match(ensembl.ids, gene.map$ensembl_gene_id)
+hgnc.ids = gene.map$hgnc_symbol[idx]
+has.hgnc.ids = !is.na(hgnc.ids)&(hgnc.ids!="")
+rownames(HSMM_expr_matrix.hgnc)[has.hgnc.ids] = hgnc.ids[has.hgnc.ids]
+
+HSMM_lda_model = compute.lda(HSMM_expr_matrix.hgnc, k.topics=6)
+@ %def
+
+For convenience, we have packaged a pre-computed LDA model that already includes converted gene names:
+
+<<load_lda_with_hgnc, eval=TRUE>>=
+# Load pre-computed LDA model for skeletal myoblast RNA-Seq data
+# from HSMMSingleCell package:
+data(HSMM_lda_model)
+
+# Number of topics of fitted model:
+print(HSMM_lda_model$K)
+
+# Model uses HGCN gene names:
+head(rownames(HSMM_lda_model$theta))
+@ %def
+
+\section{Building a Backbone Tree}
+
+Once a model has been fitted to the data using \Rfunction{compute.lda}, it is possible to compute pairwise distances for all cells, based on per-cell topic histograms (we use the Chi-square distance):
+
+<<pairwise_distances, eval=TRUE>>=
+# Compute pairwise distance between cells
+# based on topic distributions in the fitted model:
+dists = get.cell.dists(HSMM_lda_model)
+
+print(dists[1:5,1:5])
+@ %def
+
+This distance matrix can be used with methods such as \Rfunction{hclust}, to perform hierarchical cluster analysis, or with various tree-building algorithm, to identifying the underlying tree structure of the cells.
+
+
+In most cases, the cells measured are taken in groups of similar samples (e.g. at specific time-points) that spread along a continuum between the various groups. We expect a small (or at least smaller) variance within groups, and average short distance between samples belonging to neighbouring groups (in time or space). One natural way to visualise such a structure is using a minimum spanning tree (MST).
+
+
+In order to help properly root the tree, we can provide additional information to the function, in the form of group labels for each cell batch. In this instance, cells were measured at 4 separate time points (0, 24, 48 and 72 hours):
+
+<<day_annotation, eval=TRUE>>=
+# Recover sampling time point for each cell:
+library(HSMMSingleCell)
+data(HSMM_sample_sheet)
+days.factor = HSMM_sample_sheet$Hours
+days = as.numeric(levels(days.factor))[days.factor]
+
+# Our grouping annotation (in hours):
+print(unique(days))
+@ %def
+
+With this time annotation, we can then compute the rooted MST:
+
+<<mst_tree, eval=TRUE>>=
+# compute MST from a fitted LDA model:
+mst.tree = compute.backbone.tree(HSMM_lda_model, days, only.mst=TRUE)
+@ %def
+
+<<plot_mst_tree_with_topics, eval=TRUE, echo=TRUE, fig.show="asis", dpi=144, fig.width=5, fig.height=5, out.width="5in", out.height="5in">>=
+# plot the tree (showing topic distribution for each cell):
+mst.tree.with.layout = ct.plot.topics(mst.tree)
+@ %def
+
+To have a better idea of the accuracy of the tree representation, we can plot it with the time group for each cell:
+
+<<plot_mst_tree_with_groups, echo=TRUE, fig.show="asis", dpi=144, fig.width=5, fig.height=5, out.width="5in", out.height="5in">>=
+# plot the tree (showing time point for each cell):
+mst.tree.with.layout = ct.plot.grouping(mst.tree)
+@ %def
+
+As we can see, the inferred tree structure of the cells is somewhat consistent with the time points (i.e. generally follows a chronological order).
+
+
+However, the MST approach relies to some extent on the assumption that cell distances are uniformly distributed, whereas in fact, we can expect cells inside a same group to have much lower variance than across groups. 
+
+The ``ideal'' structure of a typical cell differentiation experiment would look like a single path from one cell to the next or, in the case of subtype differentiation, a tree with a very small number of branches. Of course, because the samples do in fact represent separate cells, rather than the evolution of a single cell, we must expect small variations around such an idealised continuum. Our suggested approach is to identify cells that are most representative (at the gene expression level) of the biological process continuum, to create a ``backbone'', with all remaining cells at reasonably small distances from the backbone.
+
+In more formal terms:
+
+Considering a set of vertices $V$ and a distance function over all pairs of vertices: $d: V \times V \rightarrow \mathds{R}^+$, we call \emph{backbone tree} a graph, $T$ with backbone $B$, such that:
+\begin{itemize}
+  \item $T$ is a tree with set of vertices $V$ and edges $E$.
+  \item $B$ is a tree with set of vertices $V_B \subseteq V$ and edges $E_B \\ E$.
+  \item All vertices in $V \setminus V_B$ are less than distance $\delta$ to a vertex in the backbone tree $B$: $\forall v \in V \setminus V_B, \exists v_B \in V_B$ such that $d(v, v_b) \le \delta$.
+  \item All `vertebrae' vertices of $T$ ($v \in V \setminus V_B$) are connected by a single edge to the closest vertex in the backbone tree: $\forall v \in V \setminus V_B, \forall v' \in V: (v, v') \in E \iff v' = argmin_{v' \in V_B} d(v, v')$.
+\end{itemize}
+
+In this instance, we relax the last condition to cover only ``most'' non-backbone vertices, allowing for a variable proportion of outliers at distance $> \delta$ from any vertices in $V_B$.
+
+
+We can then define an optimal backbone tree, $T^*$ to be a backbone tree that minimises the sum of weighted edges in its backbone subtree:
+
+\begin{equation}
+	T^* = argmin_{T} \sum_{e \in E_B} d(e)
+\end{equation}
+
+Finding such a tree can be easily shown to be NP-Complete (by reduction to the Vertex Cover problem), but we developed a fast heuristic relying on Minimum Spanning Tree to produce a reasonable approximation.
+The resulting quasi-optimal backbone tree (simply referred to as `the' backbone tree hereafter) gives a clear hierarchical representation of the cells relationship: the objective function puts pressure on finding a (small) group of prominent cells (the backbone) that are good representatives of major steps in the cell evolution (in time or space), while remaining cells are similar enough to their closest representative for their difference to be ignored. 
+
+Backbone trees provides a very clear visualisation of overall cell differentiation paths (including potential differentiation into sub-types):
+
+<<plot_btree_with_groups, eval=TRUE, echo=TRUE, fig.show="asis", dpi=144, fig.width=5, fig.height=5, out.width="5in", out.height="5in">>=
+# compute backbone tree from a fitted LDA model:
+b.tree = compute.backbone.tree(HSMM_lda_model, days)
+
+# plot the tree (showing time label for each cell):
+b.tree.with.layout = ct.plot.grouping(b.tree)
+@ %def
+
+In this plot, each backbone cell is represented as a larger disk, with its closest cells around it as smaller disks.
+
+The backbone tree algorithm correctly finds the forked structure we expect in this particular instance, where proliferating cells eventually separate into interstitial mesenchymal and differentiating myoblasts~\cite{trapnell2014pseudo}. However, we may expect a longer common trunk at the beginning of the experiment. This can be adjusted by passing a larger \Rcode{width.scale.factor} argument (default is 1.2):
+
+<<plot_btree_with_groups_wider, eval=TRUE, echo=TRUE, fig.show="asis", dpi=144, fig.width=5, fig.height=5, out.width="5in", out.height="5in">>=
+# compute backbone tree from a fitted LDA model:
+b.tree = compute.backbone.tree(HSMM_lda_model, days, width.scale.factor=1.5)
+
+# plot the tree (showing time label for each cell):
+b.tree.with.layout = ct.plot.grouping(b.tree)
+@ %def
+
+The \Rcode{width.scale.factor} will affect what the backbone tree construction algorithm consider to be ``close enough'' cells: larger values will lead to less branches and more shared branch segments.
+
+Finally, we can plot the backbone tree with the topic distribution for each cell:
+
+<<plot_btree_with_topics_wider, eval=TRUE, echo=TRUE, fig.show="asis", dpi=144, fig.width=5, fig.height=5, out.width="5in", out.height="5in">>=
+# plot the tree (showing topic distribution for each cell):
+b.tree.with.layout = ct.plot.topics(b.tree)
+@ %def
+
+\section{Gene Set Enrichment with Gene Ontologies}
+\label{sec:go.enrichment}
+
+Because of their Bayesian mixture nature, and despite the slightly misleading name, `topics' obtained through LDA fitting do not always match clear and coherent groupings (biological or otherwise), depending on sparsity of model and complexity of the input data. In particular, slightly less sparse models (with higher number of topics) can lead to better cell distance computation, but be harder to interpret.
+
+In most cases, however, enrichment analysis of per-topic gene distribution can help characterise a given topic and its role in the cell's process, and even provide potential biological insight, by outlining the general processes most active in specific sections of the cell tree.
+
+Topic analysis is conducted using Gene Ontology (GO) terms~\cite{ashburner2000gene}. For each topic, \cellTree{} orders genes by their per-topic probability and uses a Kolmogorov-Smirnov test to compute a p-value on the matching nodes in the GO graph. Three annotation categories are available: biological processes, cellular components and molecular functions.
+
+To be able to map genes to GO terms, \cellTree{} needs the relevant species database, e.g. \Biocpkg{org.Hs.eg.db} for \emph{Homo Sapiens} or \Biocpkg{org.Mm.eg.db} for \emph{Mus Musculus}:
+
+<<go_lib, eval=TRUE>>=
+# Load GO mappings for human:
+library(org.Hs.eg.db)
+@ %def
+
+We can then compute significantly enriched sets for each topic:
+
+<<go_terms, eval=TRUE, results="hide">>=
+# Compute GO enrichment sets (using the Cellular Components category)
+# for each topic
+go.results = compute.go.enrichment(HSMM_lda_model,
+                            org.Hs.eg.db, ontology.type="CC",
+                            bonferroni.correct=TRUE, p.val.threshold=0.01)
+@ %def
+
+<<go_terms_print, eval=TRUE>>=
+# Print ranked table of significantly enriched terms for topic 1
+# that do not appear in other topics:
+go.results$unique[[1]]
+@ %def
+
+During enrichment testing, you can have the function plot and output a subgraph of significantly enriched terms for each topic, by using the \Rcode{dag.file.prefix} argument:
+
+<<go_terms_dag_files, eval=FALSE>>=
+# Compute GO enrichment sets (using the Biological Process category)
+# for each topic and saves DAG plots to files:
+go.results.bp = compute.go.enrichment(HSMM_lda_model,
+                                org.Hs.eg.db, ontology.type="BP",
+                                bonferroni.correct=TRUE, p.val.threshold=0.01,    
+                                dag.file.prefix="hsmm_go_")
+@ %def
+
+A useful way to visualise GO results is by plotting the subgraph of all enriched terms, coloured according to topic, using function \Rfunction{ct.plot.go.dag}:
+
+<<plot_go_results, eval=TRUE, echo=TRUE, fig.show="asis", dpi=144, fig.width=5, fig.height=5, out.width="5in", out.height="5in">>=
+# plot GO sub-DAG for topics 1 to 3:
+go.dag.subtree = ct.plot.go.dag(go.results,
+                                up.generations = 2,
+                                only.topics=c(1:3))
+@ %def
+
+Terms that are enriched for multiple topics are coloured with a mixture of the topics involved (weighted by their significance), making it easy to tell the terms that are exclusive to a small number of topics.
+
+It is also possible to export the entire set of GO enrichment tables to a self-contained \LaTeX document by using \Rfunction{go.results.to.latex}.
+
+\section{Result Summary}
+
+In addition to topic and grouping plotting, \cellTree{} can output a useful ranked table of all cells in the data set, ordered along the cell tree (non-backbone cells are placed using interpolation between the nearest backbone cells).
+
+<<cell_ordering_table, eval=TRUE>>=
+# Generate table summary of cells, ranked by tree position:
+cell.table = cell.ordering.table(b.tree)
+
+# Print first 5 cells:
+cell.table[1:5,]
+@ %def
+
+
+There too, an option to create a self-contained \LaTeX version is available:
+
+<<cell_ordering_table_latex, eval=FALSE>>=
+# Generate table summary of cells, ranked by tree position:
+cell.table = cell.ordering.table(b.tree,
+                                write.to.tex.file="cell_summary.tex")
+@ %def
+
+\begin{thebibliography}{1}
+
+\bibitem{saliba2014single}
+Antoine-Emmanuel Saliba, Alexander~J Westermann, Stanislaw~A Gorski, and
+  J{\"o}rg Vogel.
+\newblock Single-cell rna-seq: advances and future challenges.
+\newblock {\em Nucleic acids research}, page gku555, 2014.
+
+\bibitem{trapnell2014dynamics}
+Cole Trapnell, Davide Cacchiarelli, Jonna Grimsby, Prapti Pokharel, Shuqiang
+  Li, Michael Morse, Niall~J Lennon, Kenneth~J Livak, Tarjei~S Mikkelsen, and
+  John~L Rinn.
+\newblock The dynamics and regulators of cell fate decisions are revealed by
+  pseudotemporal ordering of single cells.
+\newblock {\em Nature biotechnology}, 32(4):381--386, 2014.
+
+\bibitem{julia2015sincell}
+Miguel Juli{\'a}, Amalio Telenti, and Antonio Rausell.
+\newblock Sincell: an r/bioconductor package for statistical assessment of
+  cell-state hierarchies from single-cell rna-seq.
+\newblock {\em Bioinformatics}, page btv368, 2015.
+
+\bibitem{blei2003latent}
+David~M Blei, Andrew~Y Ng, and Michael~I Jordan.
+\newblock Latent dirichlet allocation.
+\newblock {\em the Journal of machine Learning research}, 3:993--1022, 2003.
+
+\bibitem{hornik2011topicmodels}
+Kurt Hornik and Bettina Gr{\"u}n.
+\newblock topicmodels: An r package for fitting topic models.
+\newblock {\em Journal of Statistical Software}, 40(13):1--30, 2011.
+
+\bibitem{taddy2011estimation}
+Matthew~A Taddy.
+\newblock On estimation and selection for topic models.
+\newblock {\em arXiv preprint arXiv:1109.4518}, 2011.
+
+\bibitem{trapnell2014pseudo}
+Cole Trapnell, Davide Cacchiarelli, Jonna Grimsby, Prapti Pokharel, Shuqiang
+  Li, Michael Morse, Niall~J Lennon, Kenneth~J Livak, Tarjei~S Mikkelsen, and
+  John~L Rinn.
+\newblock Pseudo-temporal ordering of individual cells reveals dynamics and
+  regulators of cell fate decisions.
+\newblock {\em Nature biotechnology}, 32(4):381, 2014.
+
+\bibitem{ashburner2000gene}
+Michael Ashburner, Catherine~A Ball, Judith~A Blake, David Botstein, Heather
+  Butler, J~Michael Cherry, Allan~P Davis, Kara Dolinski, Selina~S Dwight,
+  Janan~T Eppig, et~al.
+\newblock Gene ontology: tool for the unification of biology.
+\newblock {\em Nature genetics}, 25(1):25--29, 2000.
+
+\end{thebibliography}
+
+% \bibliography{cellTree/REFERENCES}
+
+\section{Session Info}
+
+<<session_info, eval=TRUE>>=
+sessionInfo()
+@ %def
+
+\end{document}

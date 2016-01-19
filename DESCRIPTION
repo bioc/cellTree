@@ -1,0 +1,25 @@
+Package: cellTree
+Title: Inference and visualisation of Single-Cell RNA-seq Data data as a hierarchical tree
+          structure
+Version: 0.99.3
+Authors@R: c(person("David", "duVerle", email = "dave@cb.k.u-tokyo.ac.jp", role = c("aut",
+          "cre")), person("Koji", "Tsuda", email = "tsuda@k.u-tokyo.ac.jp", role = c("aut")))
+Authors: David duVerle [aut, cre], Koji Tsuda [aut]
+Encoding: UTF-8
+Description: This packages computes a Latent Dirichlet Allocation (LDA) model of single-cell
+          RNA-seq data and builds a compact tree modelling the relationship between
+          individual cells over time or space.
+Depends: R (>= 3.3), topGO
+License: Artistic-2.0
+LazyData: true
+RoxygenNote: 5.0.1
+VignetteBuilder: knitr
+URL: http://tsudalab.org
+Imports: topicmodels, slam, maptpx, igraph, xtable, gplots
+Suggests: BiocStyle, knitr, HSMMSingleCell, biomaRt, org.Hs.eg.db, Biobase, tools
+biocViews: Sequencing, RNASeq, Clustering, GraphAndNetwork, Visualization, GeneExpression,
+          GeneSetEnrichment, BiomedicalInformatics, CellBiology, FunctionalGenomics,
+          SystemsBiology, GO, TimeCourse, Microarray
+NeedsCompilation: no
+Author: David duVerle [aut, cre], Koji Tsuda [aut]
+Maintainer: David duVerle <dave@cb.k.u-tokyo.ac.jp>
