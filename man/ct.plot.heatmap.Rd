@@ -38,6 +38,6 @@ days = as.numeric(levels(days.factor))[days.factor]
 b.tree = compute.backbone.tree(HSMM_lda_model, days)
 # Plot heatmap:
 data(HSMM_expr_matrix)
-ct.plot.heatmap(HSMM_expr_matrix, b.tree, reorder.genes=FALSE)
+ct.plot.heatmap(HSMM_expr_matrix[1:2000,], b.tree, reorder.genes=FALSE)
 }
 

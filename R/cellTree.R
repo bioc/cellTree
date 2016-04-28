@@ -398,7 +398,9 @@ ct.plot.heatmap <- function(data, b.tree, log.scale=TRUE, sd.filter=0.7, reorder
 	dev.new(width=10, height=4)
 	if(nrow(data) < 50) lab.row = rownames(data)[gene.reordering] else lab.row = NA
       
-	gplots::heatmap.2(data[,cell.reordering], Rowv=reorder.genes, Colv=NA, dendrogram="none", labRow=lab.row, labCol=NA, trace="none", col=myheatcol, breaks=mybreaks, ColSideColors=V(b.tree)$color[cell.reordering], key=FALSE, keysize=0.8, lwid=c(0.8,10), lhei=c(0.1,3.5,0))
+		# New gplots doesn't seem to like lwid/lhei settings…
+	# gplots::heatmap.2(data[,cell.reordering], Rowv=reorder.genes, Colv=NA, dendrogram="none", labRow=lab.row, labCol=NA, trace="none", col=myheatcol, breaks=mybreaks, ColSideColors=V(b.tree)$color[cell.reordering], key=FALSE, keysize=0.8, lwid=c(0.8,10), lhei=c(0.1,3.5,0))
+	gplots::heatmap.2(data[,cell.reordering], Rowv=reorder.genes, Colv=NA, dendrogram="none", labRow=lab.row, labCol=NA, trace="none", col=myheatcol, breaks=mybreaks, ColSideColors=V(b.tree)$color[cell.reordering], key=FALSE, keysize=0.8)
    
    return(data[,cell.reordering])
 }
