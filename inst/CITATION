@@ -1,0 +1,17 @@
+citHeader("The methods within the code package can be cited as:")
+
+citEntry(
+   entry="article",
+   title = "CellTree: an R/bioconductor package to infer the hierarchical structure of cell populations from single-cell RNA-seq data",
+   author = personList(as.person("David A. duVerle"),
+                       as.person("Sohiya Yotsukura"),
+                       as.person("Seitaro Nomura"),
+                       as.person("Hiroyuki Aburatani"),
+                       as.person("Koji Tsuda")
+                       ),
+   journal = "BMC Bioinformatics",
+   year = 2016,
+   textVersion = "duVerle, D.A. (2016) CellTree: an R/bioconductor package to infer the hierarchical structure of cell populations from single-cell RNA-seq data. BMC Bioinformatics."
+)
+
+citFooter("This free open-source software implements academic research by the authors and co-workers. If you use it, please support the project by citing the appropriate journal articles.")
