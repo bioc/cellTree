@@ -72,14 +72,15 @@ All tabular results can be exported to \LaTeX, for convenient re-use in scientif
 Installing \cellTree{} from \Bioconductor{} will install all these dependencies:
 
 <<install_cellTree, eval=FALSE>>=
-source("http://bioconductor.org/biocLite.R") 
-biocLite("cellTree")
+if (!requireNamespace("BiocManager", quietly=TRUE))
+    install.packages("BiocManager")
+BiocManager::install("cellTree")
 @ %def
 
 The documentation's examples as well as this vignette's code will further require \Bioconductor{} packages: \Biocpkg{HSMMSingleCell}, \Biocpkg{org.Hs.eg.db} and \Biocpkg{biomaRt}:
 
 <<install_missing_bioconductor_packages, eval=FALSE>>=
-biocLite(c("HSMMSingleCell", "org.Hs.eg.db", "biomaRt"))
+BiocManager::install(c("HSMMSingleCell", "org.Hs.eg.db", "biomaRt"))
 @ %def
 
 Then load the package with:
