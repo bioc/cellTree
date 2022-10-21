@@ -1,7 +1,7 @@
 Package: cellTree
 Title: Inference and visualisation of Single-Cell RNA-seq data as a hierarchical tree
           structure
-Version: 1.27.0
+Version: 1.27.1
 Authors@R: c(person("David", "duVerle", email = "dave@cb.k.u-tokyo.ac.jp", role = c("aut",
           "cre")), person("Koji", "Tsuda", email = "tsuda@k.u-tokyo.ac.jp", role = c("aut")))
 Authors: David duVerle [aut, cre], Koji Tsuda [aut]
@@ -23,3 +23,4 @@ biocViews: ImmunoOncology, Sequencing, RNASeq, Clustering, GraphAndNetwork, Visu
 NeedsCompilation: no
 Author: David duVerle [aut, cre], Koji Tsuda [aut]
 Maintainer: David duVerle <dave@cb.k.u-tokyo.ac.jp>
+PackageStatus: Deprecated
